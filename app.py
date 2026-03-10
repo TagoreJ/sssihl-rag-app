@@ -99,6 +99,15 @@ with st.sidebar:
     st.markdown("## 🎓 Sia @ SSSIHL")
     st.markdown("---")
     
+    st.markdown("### 🎭 Who are you?")
+    user_role = st.radio(
+        "Select your role:",
+        ["Student", "Teacher", "Recruiter / Visitor"],
+        help="Sia will tailor her answers and tone based on who you are."
+    )
+    
+    st.markdown("---")
+    
     st.markdown("### 📊 Session Stats")
     st.markdown(f"<div class='stat-box'>💬 Messages: <b>{st.session_state.msg_count}</b></div>", unsafe_allow_html=True)
     st.markdown(f"<div class='stat-box'>🔢 Tokens: <b>{st.session_state.tokens}</b></div>", unsafe_allow_html=True)
@@ -135,10 +144,17 @@ llm = ChatOpenAI(
     }
 )
 
+# ── Persona Data ──────────────────────────────────────────────────────────────
+ROLE_INSTRUCTIONS = {
+    "Student": "You are talking to a current or prospective student. Be extremely encouraging, helpful, and friendly. Focus on academics, campus life, and student activities.",
+    "Teacher": "You are talking to a teacher or faculty member. Be highly respectful and professional. Provide deeper academic or administrative insights if available.",
+    "Recruiter / Visitor": "You are talking to a recruiter, corporate guest, or outside visitor. Use a professional, marketing-oriented tone. Actively highlight the excellence, values, and strong alumni base of our institute. Emphasize why our institute is great."
+}
+
 # ── Prompt ────────────────────────────────────────────────────────────────────
 PROMPT = ChatPromptTemplate.from_template("""
 You are Sia, a smart, highly intelligent, and conversational AI assistant for Sri Sathya Sai Institute of Higher Learning (SSSIHL). 
-You behave like a person (similar to ChatGPT) and take on the persona of a helpful student guide.
+You behave like a person (similar to ChatGPT) and take on the persona of a helpful guide.
 
 Here is some retrieved information from the institute's database:
 ---
@@ -146,8 +162,9 @@ Here is some retrieved information from the institute's database:
 ---
 
 INSTRUCTIONS:
+0. PERSONA FOCUS: {role_instruction} Tailor your tone and answer style STRICTLY to this audience!
 1. Carefully read the user's question and THINK about what they are really asking.
-2. Look at the retrieved information above. If the answer is in there, provide a clear, natural, and direct response.
+2. Look at the retrieved information above. If the answer is in there, provide a clear, natural, and direct response formatted for the audience.
 3. If the retrieved information DOES NOT contain the answer to their specific question, DO NOT talk about unrelated topics from the context. Instead, politely admit that you don't have that exact knowledge in your database right now.
 4. If the user just says a greeting (like "hi" or "how are you"), respond naturally without forcing facts into the conversation.
 5. DO NOT cite file names, source paths, or page numbers in your text. Just answer seamlessly.
@@ -205,7 +222,12 @@ def ask(question, model_to_use=None):
         )
 
     response = active_llm.invoke(
-        PROMPT.format_messages(history=history or "None", context=context, question=question)
+        PROMPT.format_messages(
+            history=history or "None", 
+            context=context, 
+            question=question,
+            role_instruction=ROLE_INSTRUCTIONS[user_role]
+        )
     )
     if hasattr(response, "usage_metadata") and response.usage_metadata:
         st.session_state.tokens += response.usage_metadata.get("total_tokens", 0)
