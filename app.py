@@ -9,18 +9,23 @@ from pinecone import Pinecone
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="SSSIHL Knowledge Assistant",
-    page_icon="🕉️",
+    page_title="Sia - SSSIHL Knowledge Assistant",
+    page_icon="🎓",
     layout="wide"
 )
 
 with open("style.css") as f:
     st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
-# ── Header ────────────────────────────────────────────────────────────────────
+# ── Header & SEO ──────────────────────────────────────────────────────────────
 st.markdown("""
+<head>
+    <meta name="description" content="Sia: The AI Knowledge Assistant for Sri Sathya Sai Institute of Higher Learning (SSSIHL). Ask questions about admissions, campus, and programs.">
+    <meta name="keywords" content="SSSIHL, Sri Sathya Sai Institute of Higher Learning, Sia AI, SSSIHL AI, education chatbot, SSSIHL admissions">
+    <meta name="author" content="SSSIHL">
+</head>
 <div class='header-box'>
-    <h1>🕉️ Sia — SSSIHL Knowledge Assistant</h1>
+    <h1>🎓 Sia — SSSIHL Knowledge Assistant</h1>
     <p>Hi, I am Sia! Your friendly guide to Sri Sathya Sai Institute of Higher Learning.</p>
 </div>
 """, unsafe_allow_html=True)
@@ -85,19 +90,13 @@ def get_free_models():
 FREE_MODELS = get_free_models()
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
+# Hardcoded optimal settings since the UI dropdowns were removed for simplicity
+selected_model = list(FREE_MODELS.values())[0]  # Default to best model
+top_k = 5
+min_score = 0.45
+
 with st.sidebar:
-    st.markdown("## 🕉️ SSSIHL RAG")
-    st.markdown("---")
-    
-    st.markdown("### 🤖 Model Selection")
-    model_label    = st.selectbox("Choose Model (All Free ✅)", list(FREE_MODELS.keys()))
-    selected_model = FREE_MODELS[model_label]
-    st.caption(f"`{selected_model}`")
-
-    st.markdown("### 🎛️ Retrieval Settings")
-    top_k     = st.slider("Chunks to retrieve", 3, 10, 5)
-    min_score = st.slider("Min relevance score", 0.1, 0.9, 0.45, 0.05)
-
+    st.markdown("## 🎓 Sia @ SSSIHL")
     st.markdown("---")
     
     st.markdown("### 📊 Session Stats")
@@ -229,10 +228,12 @@ for msg in st.session_state.messages:
         
         # Show if a fallback model was used
         model_badge = ""
-        if msg.get("model_used") and msg.get("model_used") != selected_model:
-            model_badge = f" <span style='font-size:0.7em; opacity:0.6; background:rgba(0,0,0,0.1); padding:2px 6px; border-radius:10px;'>Switched to config: {msg['model_used'].split('/')[-1]} due to load</span>"
+        if msg.get("model_used") and msg.get("model_used") != selected_model and msg.get("model_used") != "⚡ Sia's Local Memory":
+            model_badge = f" <span style='font-size:0.7em; opacity:0.6; background:rgba(0,0,0,0.1); padding:2px 6px; border-radius:10px;'>{msg['model_used'].split('/')[-1]}</span>"
+        elif msg.get("model_used") == "⚡ Sia's Local Memory":
+            model_badge = f" <span style='font-size:0.7em; opacity:0.6; background:rgba(0,0,0,0.1); padding:2px 6px; border-radius:10px;'>⚡ Instant Memory</span>"
             
-        st.markdown(f"<div class='bot-bubble'>🕉️ Sia{model_badge} &nbsp;{msg['content']}{src_html}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='bot-bubble'><b>Sia</b>{model_badge} &nbsp;{msg['content']}{src_html}</div>", unsafe_allow_html=True)
 
 # ── Local Persistent Cache (Memory Memory Graph Substitute) ────────────────
 CACHE_FILE = "sia_memory_cache.json"
