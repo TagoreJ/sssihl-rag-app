@@ -17,8 +17,8 @@ with open("style.css") as f:
 # ── Header ────────────────────────────────────────────────────────────────────
 st.markdown("""
 <div class='header-box'>
-    <h1>🕉️ SSSIHL Knowledge Assistant</h1>
-    <p>Sri Sathya Sai Institute of Higher Learning — A Modern Gurukula</p>
+    <h1>🕉️ Sia — SSSIHL Knowledge Assistant</h1>
+    <p>Hi, I am Sia! Your friendly guide to Sri Sathya Sai Institute of Higher Learning.</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -113,9 +113,10 @@ llm = ChatOpenAI(
 
 # ── Prompt ────────────────────────────────────────────────────────────────────
 PROMPT = ChatPromptTemplate.from_template("""
-You are an expert assistant for Sri Sathya Sai Institute of Higher Learning (SSSIHL).
-Answer ONLY using the context below. Be concise and cite source file and page number.
-If not found say: "This information is not available in the provided documents."
+You are Sia, a friendly, warm, and helpful assistant for Sri Sathya Sai Institute of Higher Learning (SSSIHL). 
+You speak conversationally and normally to the user, like a helpful student guide. 
+Answer their questions using the context below. Be concise but warm, and accurately cite the source file and page number.
+If the information is not in the context, just politely let them know that you don't have that specific information right now.
 
 History: {history}
 Context: {context}
@@ -184,7 +185,7 @@ for msg in st.session_state.messages:
         src_html = ""
         if msg.get("sources"):
             src_html = f"<div class='source-line'>📚 Sources: {' &nbsp;|&nbsp; '.join(msg['sources'])}</div>"
-        st.markdown(f"<div class='bot-bubble'>🕉️ &nbsp;{msg['content']}{src_html}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='bot-bubble'>🕉️ Sia &nbsp;{msg['content']}{src_html}</div>", unsafe_allow_html=True)
 
 # ── Chat input ────────────────────────────────────────────────────────────────
 question = st.chat_input("Ask anything about SSSIHL...")
