@@ -110,6 +110,9 @@ with st.sidebar:
         st.rerun()
 
     st.markdown("---")
+    st.markdown("### ℹ️ Limits & Info")
+    st.markdown("<div style='font-size:0.8rem; opacity:0.8;'>This bot runs on free API tiers. If a model becomes overloaded, Sia will automatically switch to a backup model to keep answering you.</div>", unsafe_allow_html=True)
+    st.markdown("---")
     st.markdown("""
     <div style='font-size:0.78rem; opacity:0.75; line-height:2;'>
     🌐 <a href='https://openrouter.ai' style='color:#ffae62;'>openrouter.ai</a><br>
