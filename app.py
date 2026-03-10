@@ -137,17 +137,25 @@ llm = ChatOpenAI(
 
 # ── Prompt ────────────────────────────────────────────────────────────────────
 PROMPT = ChatPromptTemplate.from_template("""
-You are Sia, a friendly, warm, and helpful assistant for Sri Sathya Sai Institute of Higher Learning (SSSIHL). 
-You speak conversationally to the user, like a helpful student guide. 
+You are Sia, a smart, highly intelligent, and conversational AI assistant for Sri Sathya Sai Institute of Higher Learning (SSSIHL). 
+You behave like a person (similar to ChatGPT) and take on the persona of a helpful student guide.
 
 Here is some retrieved information from the institute's database:
+---
 {context}
+---
 
-Answer the user's question primarily using the context above. If you use the context, briefly cite the source file and page number.
-If the context doesn't contain the exact answer but it's a general question (like a greeting, friendly chat, or very basic knowledge), use your intelligence to answer warmly and naturally. 
-Do not rigidly say "I don't have this info" if it's just a normal conversation. Be helpful but clearly state if something is an assumption not found in the documents.
+INSTRUCTIONS:
+1. Carefully read the user's question and THINK about what they are really asking.
+2. Look at the retrieved information above. If the answer is in there, provide a clear, natural, and direct response.
+3. If the retrieved information DOES NOT contain the answer to their specific question, DO NOT talk about unrelated topics from the context. Instead, politely admit that you don't have that exact knowledge in your database right now.
+4. If the user just says a greeting (like "hi" or "how are you"), respond naturally without forcing facts into the conversation.
+5. DO NOT cite file names, source paths, or page numbers in your text. Just answer seamlessly.
+6. Do not constantly re-introduce yourself ("Hi, I'm Sia...") on every turn. Just answer the question like an ongoing chat.
 
-History: {history}
+History: 
+{history}
+
 Question: {question}
 Answer:
 """)
@@ -163,24 +171,23 @@ def retrieve(query):
         text = m["metadata"].get("text", "")[:600]
         src  = m["metadata"].get("source_file", "doc")
         pg   = m["metadata"].get("page", "?")
-        sc   = round(m["score"], 3)
-        parts.append(f"[{src} | p.{pg} | {sc}]\n{text}")
+        # Just store the raw text without citations so the AI doesn't read file paths it shouldn't say in the final chat.
+        parts.append(text)
         sources.append(f"{src} p.{pg}")
     return "\n\n---\n\n".join(parts), list(set(sources))
 
 def ask(question, model_to_use=None):
-    vec     = embeddings.embed_query(question)
-    results = index.query(vector=vec, top_k=top_k, include_metadata=True)
-    if not results["matches"] or results["matches"][0]["score"] < min_score:
-        return "⚠️ Question doesn't seem related to the documents. Please ask something relevant to SSSIHL.", []
-
     history = "\n".join([
         f"{'User' if m['role']=='user' else 'Bot'}: {m['content']}"
         for m in st.session_state.messages[-6:]
     ])
+    
+    # Retrieve using a combined search string
     context, sources = retrieve(f"{history}\n{question}")
+    
+    # Let Sia handle missing context conversationally
     if not context:
-        return "⚠️ No relevant content found. Try rephrasing.", []
+        context = "No relevant documents found. Please inform the user that you don't have this information in your database."
 
     # Use the passed model, or the default LLM
     active_llm = llm
