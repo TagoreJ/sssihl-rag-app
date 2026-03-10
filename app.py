@@ -1,5 +1,7 @@
 import streamlit as st
 import requests
+import json
+import os
 from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
@@ -134,12 +136,16 @@ llm = ChatOpenAI(
 # ── Prompt ────────────────────────────────────────────────────────────────────
 PROMPT = ChatPromptTemplate.from_template("""
 You are Sia, a friendly, warm, and helpful assistant for Sri Sathya Sai Institute of Higher Learning (SSSIHL). 
-You speak conversationally and normally to the user, like a helpful student guide. 
-Answer their questions using the context below. Be concise but warm, and accurately cite the source file and page number.
-If the information is not in the context, just politely let them know that you don't have that specific information right now.
+You speak conversationally to the user, like a helpful student guide. 
+
+Here is some retrieved information from the institute's database:
+{context}
+
+Answer the user's question primarily using the context above. If you use the context, briefly cite the source file and page number.
+If the context doesn't contain the exact answer but it's a general question (like a greeting, friendly chat, or very basic knowledge), use your intelligence to answer warmly and naturally. 
+Do not rigidly say "I don't have this info" if it's just a normal conversation. Be helpful but clearly state if something is an assumption not found in the documents.
 
 History: {history}
-Context: {context}
 Question: {question}
 Answer:
 """)
@@ -228,6 +234,26 @@ for msg in st.session_state.messages:
             
         st.markdown(f"<div class='bot-bubble'>🕉️ Sia{model_badge} &nbsp;{msg['content']}{src_html}</div>", unsafe_allow_html=True)
 
+# ── Local Persistent Cache (Memory Memory Graph Substitute) ────────────────
+CACHE_FILE = "sia_memory_cache.json"
+
+def load_cache():
+    if os.path.exists(CACHE_FILE):
+        try:
+            with open(CACHE_FILE, "r") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def save_to_cache(question, answer, sources):
+    cache = load_cache()
+    # Store lowercased stripped version for fuzzy matching memory
+    q_key = question.lower().strip()
+    cache[q_key] = {"answer": answer, "sources": sources}
+    with open(CACHE_FILE, "w") as f:
+        json.dump(cache, f)
+
 # ── Chat input ────────────────────────────────────────────────────────────────
 question = st.chat_input("Ask anything about SSSIHL...")
 
@@ -239,33 +265,47 @@ if question:
     st.session_state.msg_count += 1
     
     with st.spinner("🧠 Searching documents and generating response..."):
-        # Import exception for rate limit catching
-        import openai
+        # Check Local Cache first (Direct Answer Memory)
+        local_cache = load_cache()
+        q_key = question.lower().strip()
         
-        success = False
-        # Try the user's selected model first
-        models_to_try = [selected_model] + [m for m in FREE_MODELS.values() if m != selected_model]
-        
-        answer = "⚠️ Sorry, all free models are currently overloaded. Please try again in a few minutes."
-        sources = []
-        model_used = selected_model
-        
-        for attempt_model in models_to_try:
-            try:
-                if attempt_model != selected_model:
-                    st.toast(f"⚠️ Primary model rate limited. Trying fallback: {attempt_model.split('/')[-1]}", icon="🔄")
+        if q_key in local_cache:
+            # Found in persistent memory graph! Return instantly.
+            answer = local_cache[q_key]["answer"]
+            sources = local_cache[q_key]["sources"]
+            model_used = "⚡ Sia's Local Memory"
+        else:
+            # Import exception for rate limit catching
+            import openai
+            
+            success = False
+            # Try the user's selected model first
+            models_to_try = [selected_model] + [m for m in FREE_MODELS.values() if m != selected_model]
+            
+            answer = "⚠️ Sorry, all free models are currently overloaded. Please try again in a few minutes."
+            sources = []
+            model_used = selected_model
+            
+            for attempt_model in models_to_try:
+                try:
+                    if attempt_model != selected_model:
+                        st.toast(f"⚠️ Primary model rate limited. Trying fallback: {attempt_model.split('/')[-1]}", icon="🔄")
+                        
+                    answer, sources = ask(question, model_to_use=attempt_model)
+                    success = True
+                    model_used = attempt_model
                     
-                answer, sources = ask(question, model_to_use=attempt_model)
-                success = True
-                model_used = attempt_model
-                break # Success! Break the loop
-                
-            except openai.RateLimitError:
-                continue # Try the next model
-            except Exception as e:
-                # If it's another kind of error, log it and still try next
-                print(f"Error with model {attempt_model}: {e}")
-                continue
+                    # Save successful exact new queries to persistent cache
+                    save_to_cache(question, answer, sources)
+                    
+                    break # Success! Break the loop
+                    
+                except openai.RateLimitError:
+                    continue # Try the next model
+                except Exception as e:
+                    # If it's another kind of error, log it and still try next
+                    print(f"Error with model {attempt_model}: {e}")
+                    continue
                 
     st.session_state.messages.append({
         "role": "assistant", 
