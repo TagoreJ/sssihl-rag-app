@@ -119,18 +119,27 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("### ⚙️ API Settings")
 
+    # Helper to load secrets safely whether on cloud or local
+    def get_secret(key, default=""):
+        try:
+            return st.secrets.get(key, default)
+        except Exception:
+            return default
+
     openrouter_key = st.text_input(
         "🔑 OpenRouter API Key",
         type="password",
+        value=get_secret("OPENROUTER_API_KEY", ""),
         placeholder="sk-or-v1-...",
         help="Get free key at openrouter.ai"
     )
     pinecone_key = st.text_input(
         "🔑 Pinecone API Key",
         type="password",
+        value=get_secret("PINECONE_API_KEY", ""),
         placeholder="pcsk_..."
     )
-    index_name = st.text_input("📌 Index Name", value="saiinst")
+    index_name = st.text_input("📌 Index Name", value=get_secret("PINECONE_INDEX", "saiinst"))
 
     st.markdown("### 🤖 Model Selection")
     model_label    = st.selectbox("Choose Model (All Free ✅)", list(FREE_MODELS.keys()))
