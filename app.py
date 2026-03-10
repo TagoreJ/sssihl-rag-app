@@ -225,10 +225,6 @@ for msg in st.session_state.messages:
     if msg["role"] == "user":
         st.markdown(f"<div class='user-bubble'>👤 &nbsp;{msg['content']}</div>", unsafe_allow_html=True)
     else:
-        src_html = ""
-        if msg.get("sources"):
-            src_html = f"<div class='source-line'>📚 Sources: {' &nbsp;|&nbsp; '.join(msg['sources'])}</div>"
-        
         # Show if a fallback model was used
         model_badge = ""
         if msg.get("model_used") and msg.get("model_used") != selected_model and msg.get("model_used") != "⚡ Sia's Local Memory":
@@ -236,7 +232,7 @@ for msg in st.session_state.messages:
         elif msg.get("model_used") == "⚡ Sia's Local Memory":
             model_badge = f" <span style='font-size:0.7em; opacity:0.6; background:rgba(0,0,0,0.1); padding:2px 6px; border-radius:10px;'>⚡ Instant Memory</span>"
             
-        st.markdown(f"<div class='bot-bubble'><b>Sia</b>{model_badge} &nbsp;{msg['content']}{src_html}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='bot-bubble'><b>Sia</b>{model_badge} &nbsp;{msg['content']}</div>", unsafe_allow_html=True)
 
 # ── Local Persistent Cache (Memory Memory Graph Substitute) ────────────────
 CACHE_FILE = "sia_memory_cache.json"
