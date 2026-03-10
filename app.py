@@ -1,4 +1,5 @@
 import streamlit as st
+import requests
 from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
@@ -52,15 +53,34 @@ def init_rag():
 with st.spinner("🔄 Initializing system and connecting to DB..."):
     embeddings, index, openrouter_key = init_rag()
 
-# ── FREE models list for dropdown ─────────────────────────────────────────────
-FREE_MODELS = {
-    "⚡ LLaMA 3.3 70B (Best for RAG)": "meta-llama/llama-3.3-70b-instruct:free",
-    "🌟 Gemini 2.0 Flash (1M context)": "google/gemini-2.0-flash-exp:free",
-    "🧠 DeepSeek R1 (Best reasoning)": "deepseek/deepseek-r1:free",
-    "🔥 Hermes 3 405B (Most powerful)": "nousresearch/hermes-3-llama-3.1-405b:free",
-    "⚡ Mistral Small 3.1 (Fast)": "mistralai/mistral-small-3.1:free",
-    "🤖 Gemma 3 27B (Google)": "google/gemma-3-27b-it:free",
-}
+# ── Fetch FREE models list dynamically ─────────────────────────────────────────
+@st.cache_data(ttl=3600)
+def get_free_models():
+    default_models = {
+        "⚡ LLaMA 3.3 70B": "meta-llama/llama-3.3-70b-instruct:free",
+        "🌟 Gemini 2.0 Flash": "google/gemini-2.0-flash-exp:free",
+        "🧠 DeepSeek R1": "deepseek/deepseek-r1:free",
+    }
+    try:
+        response = requests.get("https://openrouter.ai/api/v1/models")
+        if response.status_code == 200:
+            models_data = response.json().get("data", [])
+            # Filter for models that have a pricing of 0 or 'free' in id
+            free_models = {}
+            for m in models_data:
+                # OpenRouter usually tags free models with ':free' in ID
+                if ":free" in m["id"] or "free" in m["id"].lower():
+                    name = m.get("name", m["id"].split("/")[-1])
+                    free_models[f"✨ {name}"] = m["id"]
+            
+            # If we successfully fetched free models, return them, else defaults
+            if free_models:
+                return free_models
+    except Exception as e:
+        pass
+    return default_models
+
+FREE_MODELS = get_free_models()
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 with st.sidebar:
@@ -140,9 +160,9 @@ def retrieve(query):
         sources.append(f"{src} p.{pg}")
     return "\n\n---\n\n".join(parts), list(set(sources))
 
-def ask(question):
+def ask(question, model_to_use=None):
     vec     = embeddings.embed_query(question)
-    results = index.query(vector=vec, top_k=1, include_metadata=True)
+    results = index.query(vector=vec, top_k=top_k, include_metadata=True)
     if not results["matches"] or results["matches"][0]["score"] < min_score:
         return "⚠️ Question doesn't seem related to the documents. Please ask something relevant to SSSIHL.", []
 
@@ -154,7 +174,22 @@ def ask(question):
     if not context:
         return "⚠️ No relevant content found. Try rephrasing.", []
 
-    response = llm.invoke(
+    # Use the passed model, or the default LLM
+    active_llm = llm
+    if model_to_use:
+        active_llm = ChatOpenAI(
+            model=model_to_use,
+            openai_api_key=openrouter_key,
+            openai_api_base="https://openrouter.ai/api/v1",
+            temperature=0.2,
+            max_tokens=1024,
+            default_headers={
+                "HTTP-Referer": "https://sssihl.edu.in",
+                "X-Title"     : "SSSIHL Knowledge Assistant"
+            }
+        )
+
+    response = active_llm.invoke(
         PROMPT.format_messages(history=history or "None", context=context, question=question)
     )
     if hasattr(response, "usage_metadata") and response.usage_metadata:
@@ -185,7 +220,13 @@ for msg in st.session_state.messages:
         src_html = ""
         if msg.get("sources"):
             src_html = f"<div class='source-line'>📚 Sources: {' &nbsp;|&nbsp; '.join(msg['sources'])}</div>"
-        st.markdown(f"<div class='bot-bubble'>🕉️ Sia &nbsp;{msg['content']}{src_html}</div>", unsafe_allow_html=True)
+        
+        # Show if a fallback model was used
+        model_badge = ""
+        if msg.get("model_used") and msg.get("model_used") != selected_model:
+            model_badge = f" <span style='font-size:0.7em; opacity:0.6; background:rgba(0,0,0,0.1); padding:2px 6px; border-radius:10px;'>Switched to config: {msg['model_used'].split('/')[-1]} due to load</span>"
+            
+        st.markdown(f"<div class='bot-bubble'>🕉️ Sia{model_badge} &nbsp;{msg['content']}{src_html}</div>", unsafe_allow_html=True)
 
 # ── Chat input ────────────────────────────────────────────────────────────────
 question = st.chat_input("Ask anything about SSSIHL...")
@@ -196,9 +237,40 @@ if "pending" in st.session_state:
 if question:
     st.session_state.messages.append({"role": "user", "content": question})
     st.session_state.msg_count += 1
-    with st.spinner("🧠 Searching documents..."):
-        answer, sources = ask(question)
+    
+    with st.spinner("🧠 Searching documents and generating response..."):
+        # Import exception for rate limit catching
+        import openai
+        
+        success = False
+        # Try the user's selected model first
+        models_to_try = [selected_model] + [m for m in FREE_MODELS.values() if m != selected_model]
+        
+        answer = "⚠️ Sorry, all free models are currently overloaded. Please try again in a few minutes."
+        sources = []
+        model_used = selected_model
+        
+        for attempt_model in models_to_try:
+            try:
+                if attempt_model != selected_model:
+                    st.toast(f"⚠️ Primary model rate limited. Trying fallback: {attempt_model.split('/')[-1]}", icon="🔄")
+                    
+                answer, sources = ask(question, model_to_use=attempt_model)
+                success = True
+                model_used = attempt_model
+                break # Success! Break the loop
+                
+            except openai.RateLimitError:
+                continue # Try the next model
+            except Exception as e:
+                # If it's another kind of error, log it and still try next
+                print(f"Error with model {attempt_model}: {e}")
+                continue
+                
     st.session_state.messages.append({
-        "role": "assistant", "content": answer, "sources": sources
+        "role": "assistant", 
+        "content": answer, 
+        "sources": sources,
+        "model_used": model_used
     })
     st.rerun()
