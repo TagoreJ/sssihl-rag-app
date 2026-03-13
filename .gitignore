@@ -11,6 +11,10 @@ env/
 # Streamlit
 .streamlit/secrets.toml
 
+# Data & Cache (IMPORTANT: Do not commit student emails)
+emails.xlsx
+sia_memory_cache.json
+
 # OS
 .DS_Store
 Thumbs.db

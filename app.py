@@ -2,6 +2,7 @@ import streamlit as st
 import requests
 import json
 import os
+import pandas as pd
 from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
@@ -37,6 +38,25 @@ if "tokens" not in st.session_state:
     st.session_state.tokens = 0
 if "msg_count" not in st.session_state:
     st.session_state.msg_count = 0
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+if "user_name" not in st.session_state:
+    st.session_state.user_name = "Friend"
+if "user_role" not in st.session_state:
+    st.session_state.user_role = "Visitor"
+
+# ── Email lookup (Student Auth) ──────────────────────────────────────────────────────
+@st.cache_data
+def load_email_list():
+    try:
+        df = pd.read_excel("emails.xlsx")
+        # Build a dict: lowercase email -> Name
+        return {row["Email"].strip().lower(): row["Name"].strip() for _, row in df.iterrows() if pd.notna(row["Email"])}
+    except Exception as e:
+        st.warning(f"Could not load student email list: {e}")
+        return {}
+
+EMAIL_LOOKUP = load_email_list()
 
 # ── Load Secrets & Connect ────────────────────────────────────────────────────
 @st.cache_resource
@@ -99,24 +119,64 @@ with st.sidebar:
     st.markdown("## 🎓 Sia @ SSSIHL")
     st.markdown("---")
     
-    st.markdown("### 🎭 Who are you?")
-    user_role = st.radio(
-        "Select your role:",
-        ["Student", "Teacher", "Recruiter / Visitor"],
-        help="Sia will tailor her answers and tone based on who you are."
-    )
+    if st.session_state.authenticated:
+        role_icon = "📚" if st.session_state.user_role == "Student" else "🏢"
+        st.markdown(f"**{role_icon} Logged in as:**")
+        st.markdown(f"**{st.session_state.user_name}** _{st.session_state.user_role}_")
+        st.markdown("---")
+        
+        st.markdown("### 📊 Session Stats")
+        st.markdown(f"<div class='stat-box'>💬 Messages: <b>{st.session_state.msg_count}</b></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='stat-box'>🔢 Tokens: <b>{st.session_state.tokens}</b></div>", unsafe_allow_html=True)
     
-    st.markdown("---")
-    
-    st.markdown("### 📊 Session Stats")
-    st.markdown(f"<div class='stat-box'>💬 Messages: <b>{st.session_state.msg_count}</b></div>", unsafe_allow_html=True)
-    st.markdown(f"<div class='stat-box'>🔢 Tokens: <b>{st.session_state.tokens}</b></div>", unsafe_allow_html=True)
+        if st.button("🗑️ Clear Chat", use_container_width=True):
+            st.session_state.messages  = []
+            st.session_state.msg_count = 0
+            st.session_state.tokens    = 0
+            st.rerun()
 
-    if st.button("🗑️ Clear Chat", use_container_width=True):
-        st.session_state.messages  = []
-        st.session_state.msg_count = 0
-        st.session_state.tokens    = 0
-        st.rerun()
+        if st.button("🚪 Log Out", use_container_width=True):
+            st.session_state.authenticated = False
+            st.session_state.user_name = "Friend"
+            st.session_state.user_role = "Visitor"
+            st.session_state.messages  = []
+            st.session_state.msg_count = 0
+            st.session_state.tokens    = 0
+            st.rerun()
+
+    else:
+        st.markdown("### 🎭 Welcome! Who are you?")
+        auth_choice = st.radio("Choose your role:", ["Visitor", "Student"], index=0, horizontal=True)
+        
+        if auth_choice == "Student":
+            with st.form("login_form"):
+                email = st.text_input("Enter SSSIHL Email")
+                submitted = st.form_submit_button("Verify & Start")
+                if submitted:
+                    if email:
+                        email_lower = email.lower().strip()
+                        if email_lower in EMAIL_LOOKUP:
+                            st.session_state.authenticated = True
+                            st.session_state.user_name = EMAIL_LOOKUP[email_lower]
+                            st.session_state.user_role = "Student"
+                            st.success(f"Welcome, {st.session_state.user_name}! 👋")
+                            st.rerun()
+                        else:
+                            st.error("Email not found in our records.")
+                    else:
+                        st.warning("Please enter your email.")
+        else:
+            # Visitor flow - simple button to confirm
+            st.session_state.user_role = "Visitor"
+            st.session_state.user_name = "Friend"
+            if st.button("Continue as Visitor 🚀", use_container_width=True):
+                st.session_state.authenticated = True
+                st.rerun()
+
+        st.markdown("---")
+        st.markdown("### 📊 Session Stats")
+        st.markdown(f"<div class='stat-box'>💬 Messages: <b>{st.session_state.msg_count}</b></div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='stat-box'>🔢 Tokens: <b>{st.session_state.tokens}</b></div>", unsafe_allow_html=True)
 
     st.markdown("---")
     st.markdown("### ℹ️ Limits & Info")
@@ -155,6 +215,8 @@ ROLE_INSTRUCTIONS = {
 PROMPT = ChatPromptTemplate.from_template("""
 You are Sia, a smart, highly intelligent, and conversational AI assistant for Sri Sathya Sai Institute of Higher Learning (SSSIHL). 
 You behave like a person (similar to ChatGPT) and take on the persona of a helpful guide.
+
+You are interacting with {user_name}.
 
 Here is some retrieved information from the institute's database:
 ---
@@ -226,7 +288,8 @@ def ask(question, model_to_use=None):
             history=history or "None", 
             context=context, 
             question=question,
-            role_instruction=ROLE_INSTRUCTIONS[user_role]
+            user_name=st.session_state.user_name,
+            role_instruction=ROLE_INSTRUCTIONS[st.session_state.user_role]
         )
     )
     if hasattr(response, "usage_metadata") and response.usage_metadata:
