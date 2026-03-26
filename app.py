@@ -84,9 +84,10 @@ with st.spinner("🔄 Initializing system and connecting to DB..."):
 @st.cache_data(ttl=3600)
 def get_free_models():
     default_models = {
+        "Arcee Ai":"arcee-ai/trinity-mini:free",
         "⚡ LLaMA 3.3 70B": "meta-llama/llama-3.3-70b-instruct:free",
         "🌟 Gemini 2.0 Flash": "google/gemini-2.0-flash-exp:free",
-        "Arcee Ai":"arcee-ai/trinity-mini:free",
+        
     }
     try:
         response = requests.get("https://openrouter.ai/api/v1/models")
