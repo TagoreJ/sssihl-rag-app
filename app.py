@@ -86,7 +86,7 @@ def get_free_models():
     default_models = {
         "⚡ LLaMA 3.3 70B": "meta-llama/llama-3.3-70b-instruct:free",
         "🌟 Gemini 2.0 Flash": "google/gemini-2.0-flash-exp:free",
-        "🧠 DeepSeek R1": "deepseek/deepseek-r1:free",
+        "Arcee Ai":"arcee-ai/trinity-mini:free",
     }
     try:
         response = requests.get("https://openrouter.ai/api/v1/models")
