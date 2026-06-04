@@ -87,6 +87,7 @@ def get_free_models():
         "Arcee Ai":"arcee-ai/trinity-mini:free",
         "⚡ LLaMA 3.3 70B": "meta-llama/llama-3.3-70b-instruct:free",
         "🌟 Gemini 2.0 Flash": "google/gemini-2.0-flash-exp:free",
+        "Openrouter":"openrouter/free",
         
     }
     try:
