@@ -2,12 +2,11 @@ import streamlit as st
 import requests
 import json
 import os
-import pandas as pd
+import traceback
 from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from pinecone import Pinecone
-import traceback
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -16,19 +15,15 @@ st.set_page_config(
     layout="wide"
 )
 
-with open("style.css") as f:
-    st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+if os.path.exists("style.css"):
+    with open("style.css") as f:
+        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
-# ── Header & SEO ──────────────────────────────────────────────────────────────
+# ── Header ────────────────────────────────────────────────────────────────────
 st.markdown("""
-<head>
-    <meta name="description" content="Sia: The AI Knowledge Assistant for Sri Sathya Sai Institute of Higher Learning (SSSIHL). Ask questions about admissions, campus, and programs.">
-    <meta name="keywords" content="SSSIHL, Sri Sathya Sai Institute of Higher Learning, Sia AI, SSSIHL AI, education chatbot, SSSIHL admissions">
-    <meta name="author" content="SSSIHL">
-</head>
 <div class='header-box'>
-    <h1>🎓 Sia — SSSIHL Knowledge Assistant</h1>
-    <p>Hi, I am Sia! Your friendly guide to Sri Sathya Sai Institute of Higher Learning.</p>
+    <h1>🎓 Sia — SSSIHL Knowledge Assistant (Visitor)</h1>
+    <p>Ask questions about admissions, campus, and programs. Powered by OpenRouter free gateway and Pinecone RAG.</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -39,54 +34,32 @@ if "tokens" not in st.session_state:
     st.session_state.tokens = 0
 if "msg_count" not in st.session_state:
     st.session_state.msg_count = 0
-if "authenticated" not in st.session_state:
-    st.session_state.authenticated = False
-if "user_name" not in st.session_state:
-    st.session_state.user_name = "Friend"
-if "user_role" not in st.session_state:
-    st.session_state.user_role = "Visitor"
 
-# ── Email lookup (Student Auth) ──────────────────────────────────────────────────────
-@st.cache_data
-def load_email_list():
-    try:
-        df = pd.read_excel("emails.xlsx")
-        # Build a dict: lowercase email -> Name
-        return {row["Email"].strip().lower(): row["Name"].strip() for _, row in df.iterrows() if pd.notna(row["Email"])}
-    except Exception as e:
-        st.warning(f"Could not load student email list: {e}")
-        return {}
-
-EMAIL_LOOKUP = load_email_list()
-
-# ── Load Secrets & Connect ────────────────────────────────────────────────────
+# ── Initialize embeddings, Pinecone index and OpenRouter key ────────────────────
 @st.cache_resource
 def init_rag():
     try:
-        # Load from secrets directly (app will crash if not configured in Streamlit Cloud, which is desired)
         openrouter_key = st.secrets["OPENROUTER_API_KEY"]
         pinecone_key = st.secrets["PINECONE_API_KEY"]
         index_name = st.secrets.get("PINECONE_INDEX", "saiinst")
-        
+
         embeddings = FastEmbedEmbeddings(model_name="BAAI/bge-small-en-v1.5")
         pc = Pinecone(api_key=pinecone_key)
         index = pc.Index(index_name)
-        
+
         return embeddings, index, openrouter_key
     except Exception as e:
-        st.error("⚠️ Error loading API keys. Make sure to configure Streamlit Cloud secrets with `OPENROUTER_API_KEY` and `PINECONE_API_KEY`.")
+        st.error("⚠️ Error loading API keys. Set `OPENROUTER_API_KEY` and `PINECONE_API_KEY` in Streamlit secrets.")
         st.stop()
 
-# Auto-connects on page load using cached resource function
-with st.spinner("🔄 Initializing system and connecting to DB..."):
+with st.spinner("🔄 Initializing system and connecting to Pinecone..."):
     embeddings, index, openrouter_key = init_rag()
 
-# Quick diagnostics for OpenRouter connectivity to help debug 'all free models overloaded' issues
+# Quick OpenRouter connectivity check
 def check_openrouter_key(key):
     try:
         headers = {"Authorization": f"Bearer {key}"}
         r = requests.get("https://openrouter.ai/api/v1/models", headers=headers, timeout=10)
-        # Return status and a short excerpt of the response for debugging (not the key)
         return r.status_code, (r.text[:1000] if r.text else "")
     except Exception as e:
         return None, str(e)
@@ -99,98 +72,12 @@ elif status != 200:
 else:
     st.info("OpenRouter models endpoint reachable.")
 
-# ── Fetch FREE models list dynamically ─────────────────────────────────────────
-@st.cache_data(ttl=3600)
-def get_free_models():
-    # Force a single source: openrouter's unified free model endpoint.
-    # This app will always use the OpenRouter free model gateway id `openrouter/free`.
-    return {"Openrouter": "openrouter/free"}
-
-FREE_MODELS = get_free_models()
-
-# ── Sidebar ───────────────────────────────────────────────────────────────────
-# Hardcoded optimal settings since the UI dropdowns were removed for simplicity
-selected_model = list(FREE_MODELS.values())[0]  # Default to best model
+# ── Settings ──────────────────────────────────────────────────────────────────
+selected_model = "openrouter/free"
 top_k = 5
 min_score = 0.45
 
-with st.sidebar:
-    st.markdown("## 🎓 Sia @ SSSIHL")
-    st.markdown("---")
-    
-    if st.session_state.authenticated:
-        role_icon = "📚" if st.session_state.user_role == "Student" else "🏢"
-        st.markdown(f"**{role_icon} Logged in as:**")
-        st.markdown(f"**{st.session_state.user_name}** _{st.session_state.user_role}_")
-        st.markdown("---")
-        
-        st.markdown("### 📊 Session Stats")
-        st.markdown(f"<div class='stat-box'>💬 Messages: <b>{st.session_state.msg_count}</b></div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='stat-box'>🔢 Tokens: <b>{st.session_state.tokens}</b></div>", unsafe_allow_html=True)
-    
-        if st.button("🗑️ Clear Chat", use_container_width=True):
-            st.session_state.messages  = []
-            st.session_state.msg_count = 0
-            st.session_state.tokens    = 0
-            st.rerun()
-
-        if st.button("🚪 Log Out", use_container_width=True):
-            st.session_state.authenticated = False
-            st.session_state.user_name = "Friend"
-            st.session_state.user_role = "Visitor"
-            st.session_state.messages  = []
-            st.session_state.msg_count = 0
-            st.session_state.tokens    = 0
-            st.rerun()
-
-    else:
-        st.markdown("### 🎭 Welcome! Who are you?")
-        auth_choice = st.radio("Choose your role:", ["Visitor", "Student"], index=0, horizontal=True)
-        
-        if auth_choice == "Student":
-            with st.form("login_form"):
-                email = st.text_input("Enter SSSIHL Email")
-                submitted = st.form_submit_button("Verify & Start")
-                if submitted:
-                    if email:
-                        email_lower = email.lower().strip()
-                        if email_lower in EMAIL_LOOKUP:
-                            st.session_state.authenticated = True
-                            st.session_state.user_name = EMAIL_LOOKUP[email_lower]
-                            st.session_state.user_role = "Student"
-                            st.success(f"Welcome, {st.session_state.user_name}! 👋")
-                            st.rerun()
-                        else:
-                            st.error("Email not found in our records.")
-                    else:
-                        st.warning("Please enter your email.")
-        else:
-            # Visitor flow - simple button to confirm
-            st.session_state.user_role = "Visitor"
-            st.session_state.user_name = "Friend"
-            if st.button("Continue as Visitor 🚀", use_container_width=True):
-                st.session_state.authenticated = True
-                st.rerun()
-
-        st.markdown("---")
-        st.markdown("### 📊 Session Stats")
-        st.markdown(f"<div class='stat-box'>💬 Messages: <b>{st.session_state.msg_count}</b></div>", unsafe_allow_html=True)
-        st.markdown(f"<div class='stat-box'>🔢 Tokens: <b>{st.session_state.tokens}</b></div>", unsafe_allow_html=True)
-
-    st.markdown("---")
-    st.markdown("### ℹ️ Limits & Info")
-    st.markdown("<div style='font-size:0.8rem; opacity:0.8;'>This bot uses the OpenRouter free model gateway. If the OpenRouter free tier is overloaded, please try again later.</div>", unsafe_allow_html=True)
-    st.markdown("---")
-    st.markdown("""
-    <div style='font-size:0.78rem; opacity:0.75; line-height:2;'>
-    🌐 <a href='https://openrouter.ai' style='color:#ffae62;'>openrouter.ai</a><br>
-    📦 Pinecone Vector DB<br>
-    ⚡ FastEmbed BAAI BGE<br>
-    🏛️ <a href='https://www.sssihl.edu.in' style='color:#ffae62;'>sssihl.edu.in</a>
-    </div>
-    """, unsafe_allow_html=True)
-
-# ── Update the LLM with the active model dynamically ──────────────────────────
+# ── LLM setup ─────────────────────────────────────────────────────────────────
 llm = ChatOpenAI(
     model=selected_model,
     openai_api_key=openrouter_key,
@@ -199,104 +86,77 @@ llm = ChatOpenAI(
     max_tokens=1024,
     default_headers={
         "HTTP-Referer": "https://sssihl.edu.in",
-        "X-Title"     : "SSSIHL Knowledge Assistant"
+        "X-Title": "SSSIHL Knowledge Assistant"
     }
 )
 
-# ── Persona Data ──────────────────────────────────────────────────────────────
-ROLE_INSTRUCTIONS = {
-    "Student": "You are talking to a current or prospective student. Be extremely encouraging, helpful, and friendly. Focus on academics, campus life, and student activities.",
-    "Teacher": "You are talking to a teacher or faculty member. Be highly respectful and professional. Provide deeper academic or administrative insights if available.",
-    "Recruiter / Visitor": "You are talking to a recruiter, corporate guest, or outside visitor. Use a professional, marketing-oriented tone. Actively highlight the excellence, values, and strong alumni base of our institute. Emphasize why our institute is great."
-}
-
-# ── Prompt ────────────────────────────────────────────────────────────────────
+# ── Prompt ───────────────────────────────────────────────────────────────────
 PROMPT = ChatPromptTemplate.from_template("""
-You are Sia, a smart, highly intelligent, and conversational AI assistant for Sri Sathya Sai Institute of Higher Learning (SSSIHL). 
-You behave like a person (similar to ChatGPT) and take on the persona of a helpful guide.
-
-You are interacting with {user_name}.
+You are Sia, a helpful AI assistant for Sri Sathya Sai Institute of Higher Learning (SSSIHL).
+You are interacting with a visitor.
 
 Here is some retrieved information from the institute's database:
 ---
 {context}
 ---
 
-INSTRUCTIONS:
-0. PERSONA FOCUS: {role_instruction} Tailor your tone and answer style STRICTLY to this audience!
-1. Carefully read the user's question and THINK about what they are really asking.
-2. Look at the retrieved information above. If the answer is in there, provide a clear, natural, and direct response formatted for the audience.
-3. If the retrieved information DOES NOT contain the answer to their specific question, DO NOT talk about unrelated topics from the context. Instead, politely admit that you don't have that exact knowledge in your database right now.
-4. If the user just says a greeting (like "hi" or "how are you"), respond naturally without forcing facts into the conversation.
-5. DO NOT cite file names, source paths, or page numbers in your text. Just answer seamlessly.
-6. Do not constantly re-introduce yourself ("Hi, I'm Sia...") on every turn. Just answer the question like an ongoing chat.
-
-History: 
-{history}
-
 Question: {question}
 Answer:
 """)
 
-# ── RAG functions ─────────────────────────────────────────────────────────────
-def retrieve(query):
-    vec     = embeddings.embed_query(query)
-    results = index.query(vector=vec, top_k=top_k, include_metadata=True)
-    parts, sources = [], []
-    for m in results["matches"]:
-        if m["score"] < min_score:
-            continue
-        text = m["metadata"].get("text", "")[:600]
-        src  = m["metadata"].get("source_file", "doc")
-        pg   = m["metadata"].get("page", "?")
-        # Just store the raw text without citations so the AI doesn't read file paths it shouldn't say in the final chat.
-        parts.append(text)
-        sources.append(f"{src} p.{pg}")
-    return "\n\n---\n\n".join(parts), list(set(sources))
+# ── Retrieval ─────────────────────────────────────────────────────────────────
+def retrieve(query: str):
+    try:
+        vec = embeddings.embed_query(query)
+        results = index.query(vector=vec, top_k=top_k, include_metadata=True)
+        parts, sources = [], []
+        for m in results.get("matches", []):
+            if m.get("score", 0) < min_score:
+                continue
+            text = m.get("metadata", {}).get("text", "")[:2000]
+            src = m.get("metadata", {}).get("source_file", "doc")
+            pg = m.get("metadata", {}).get("page", "?")
+            parts.append(text)
+            sources.append(f"{src} p.{pg}")
+        return "\n\n---\n\n".join(parts), list(dict.fromkeys(sources))
+    except Exception as e:
+        st.error(f"Retrieval error: {e}")
+        print(traceback.format_exc())
+        return "", []
 
-def ask(question, model_to_use=None):
-    history = "\n".join([
-        f"{'User' if m['role']=='user' else 'Bot'}: {m['content']}"
-        for m in st.session_state.messages[-6:]
-    ])
-    
-    # Retrieve using a combined search string
+def ask(question: str):
+    history = "\n".join([f"User: {m['content']}" if m['role']=='user' else f"Bot: {m['content']}" for m in st.session_state.messages[-6:]])
     context, sources = retrieve(f"{history}\n{question}")
-    
-    # Let Sia handle missing context conversationally
     if not context:
-        context = "No relevant documents found. Please inform the user that you don't have this information in your database."
+        context = "No relevant documents found."
 
-    # Use the passed model, or the default LLM
-    active_llm = llm
-    if model_to_use:
-        active_llm = ChatOpenAI(
-            model=model_to_use,
-            openai_api_key=openrouter_key,
-            openai_api_base="https://openrouter.ai/api/v1",
-            temperature=0.2,
-            max_tokens=1024,
-            default_headers={
-                "HTTP-Referer": "https://sssihl.edu.in",
-                "X-Title"     : "SSSIHL Knowledge Assistant"
-            }
+    try:
+        response = llm.invoke(
+            PROMPT.format_messages(
+                context=context,
+                question=question
+            )
         )
+        if hasattr(response, "usage_metadata") and response.usage_metadata:
+            st.session_state.tokens += response.usage_metadata.get("total_tokens", 0)
+        return response.content, sources
+    except Exception as e:
+        st.error(f"Model error: {e}")
+        print(traceback.format_exc())
+        return f"⚠️ Error from model: {e}", []
 
-    response = active_llm.invoke(
-        PROMPT.format_messages(
-            history=history or "None", 
-            context=context, 
-            question=question,
-            user_name=st.session_state.user_name,
-            role_instruction=ROLE_INSTRUCTIONS[st.session_state.user_role]
-        )
-    )
-    if hasattr(response, "usage_metadata") and response.usage_metadata:
-        st.session_state.tokens += response.usage_metadata.get("total_tokens", 0)
+# ── Sidebar (visitor only) ───────────────────────────────────────────────────
+with st.sidebar:
+    st.markdown("## 🎓 Sia @ SSSIHL")
+    if st.button("🗑️ Clear Chat", use_container_width=True):
+        st.session_state.messages = []
+        st.session_state.msg_count = 0
+        st.session_state.tokens = 0
+        st.experimental_rerun()
+    st.markdown("---")
+    st.markdown("This app uses the OpenRouter free gateway and Pinecone for retrieval.")
 
-    return response.content, sources
-
-# ── Suggestion chips ──────────────────────────────────────────────────────────
+# ── Suggestion chips ─────────────────────────────────────────────────────────
 if not st.session_state.messages:
     st.markdown("**💡 Try asking:**")
     c1, c2, c3, c4 = st.columns(4)
@@ -309,105 +169,24 @@ if not st.session_state.messages:
     for col, text in chips.items():
         if col.button(text, use_container_width=True):
             st.session_state["pending"] = text
-            st.rerun()
+            st.experimental_rerun()
 
-# ── Chat history ──────────────────────────────────────────────────────────────
+# ── Chat display ────────────────────────────────────────────────────────────
 for msg in st.session_state.messages:
     if msg["role"] == "user":
         st.markdown(f"<div class='user-bubble'>👤 &nbsp;{msg['content']}</div>", unsafe_allow_html=True)
     else:
-        # Show if a fallback model was used
-        model_badge = ""
-        if msg.get("model_used") and msg.get("model_used") != selected_model and msg.get("model_used") != "⚡ Sia's Local Memory":
-            model_badge = f" <span style='font-size:0.7em; opacity:0.6; background:rgba(0,0,0,0.1); padding:2px 6px; border-radius:10px;'>{msg['model_used'].split('/')[-1]}</span>"
-        elif msg.get("model_used") == "⚡ Sia's Local Memory":
-            model_badge = f" <span style='font-size:0.7em; opacity:0.6; background:rgba(0,0,0,0.1); padding:2px 6px; border-radius:10px;'>⚡ Instant Memory</span>"
-            
-        st.markdown(f"<div class='bot-bubble'><b>Sia</b>{model_badge} &nbsp;{msg['content']}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='bot-bubble'><b>Sia</b> &nbsp;{msg['content']}</div>", unsafe_allow_html=True)
 
-# ── Local Persistent Cache (Memory Memory Graph Substitute) ────────────────
-CACHE_FILE = "sia_memory_cache.json"
-
-def load_cache():
-    if os.path.exists(CACHE_FILE):
-        try:
-            with open(CACHE_FILE, "r") as f:
-                return json.load(f)
-        except Exception:
-            return {}
-    return {}
-
-def save_to_cache(question, answer, sources):
-    cache = load_cache()
-    # Store lowercased stripped version for fuzzy matching memory
-    q_key = question.lower().strip()
-    cache[q_key] = {"answer": answer, "sources": sources}
-    with open(CACHE_FILE, "w") as f:
-        json.dump(cache, f)
-
-# ── Chat input ────────────────────────────────────────────────────────────────
+# ── Chat input ──────────────────────────────────────────────────────────────
 question = st.chat_input("Ask anything about SSSIHL...")
-
 if "pending" in st.session_state:
     question = st.session_state.pop("pending")
 
 if question:
     st.session_state.messages.append({"role": "user", "content": question})
     st.session_state.msg_count += 1
-    
     with st.spinner("🧠 Searching documents and generating response..."):
-        # Check Local Cache first (Direct Answer Memory)
-        local_cache = load_cache()
-        q_key = question.lower().strip()
-        
-        if q_key in local_cache:
-            # Found in persistent memory graph! Return instantly.
-            answer = local_cache[q_key]["answer"]
-            sources = local_cache[q_key]["sources"]
-            model_used = "⚡ Sia's Local Memory"
-        else:
-            # Import exception for rate limit catching
-            import openai
-            
-            success = False
-            # Only use the single OpenRouter free gateway model
-            models_to_try = [selected_model]
-            
-            answer = "⚠️ Sorry, all free models are currently overloaded. Please try again in a few minutes."
-            sources = []
-            model_used = selected_model
-            
-            for attempt_model in models_to_try:
-                try:
-                    if attempt_model != selected_model:
-                        st.toast(f"⚠️ Primary model rate limited. Trying fallback: {attempt_model.split('/')[-1]}", icon="🔄")
-                        
-                    answer, sources = ask(question, model_to_use=attempt_model)
-                    success = True
-                    model_used = attempt_model
-                    
-                    # Save successful exact new queries to persistent cache
-                    save_to_cache(question, answer, sources)
-                    
-                    break # Success! Break the loop
-                    
-                except openai.RateLimitError:
-                    continue # Try the next model
-                except Exception as e:
-                    # If it's another kind of error, show it in the UI and try next
-                    try:
-                        st.error(f"Error with model {attempt_model}: {e}")
-                        st.markdown(f"<details><summary>Traceback</summary><pre>{traceback.format_exc()}</pre></details>", unsafe_allow_html=True)
-                    except Exception:
-                        # Fall back to printing traceback to console if Streamlit UI calls fail
-                        print(f"Error with model {attempt_model}: {e}")
-                        print(traceback.format_exc())
-                    continue
-                
-    st.session_state.messages.append({
-        "role": "assistant", 
-        "content": answer, 
-        "sources": sources,
-        "model_used": model_used
-    })
-    st.rerun()
+        answer, sources = ask(question)
+    st.session_state.messages.append({"role": "assistant", "content": answer, "sources": sources, "model_used": selected_model})
+    st.experimental_rerun()
