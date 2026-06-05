@@ -1,6 +1,5 @@
 import streamlit as st
 import requests
-import json
 import os
 import traceback
 from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
@@ -28,12 +27,17 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ── Session state defaults ────────────────────────────────────────────────────
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "tokens" not in st.session_state:
-    st.session_state.tokens = 0
-if "msg_count" not in st.session_state:
-    st.session_state.msg_count = 0
+def init_session_state():
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+    if "tokens" not in st.session_state:
+        st.session_state.tokens = 0
+    if "msg_count" not in st.session_state:
+        st.session_state.msg_count = 0
+    if "pending" not in st.session_state:
+        st.session_state.pending = ""
+
+init_session_state()
 
 # ── Initialize embeddings, Pinecone index and OpenRouter key ────────────────────
 @st.cache_resource
@@ -46,7 +50,6 @@ def init_rag():
         embeddings = FastEmbedEmbeddings(model_name="BAAI/bge-small-en-v1.5")
         pc = Pinecone(api_key=pinecone_key)
         index = pc.Index(index_name)
-
         return embeddings, index, openrouter_key
     except Exception as e:
         st.error("⚠️ Error loading API keys. Set `OPENROUTER_API_KEY` and `PINECONE_API_KEY` in Streamlit secrets.")
@@ -125,7 +128,10 @@ def retrieve(query: str):
         return "", []
 
 def ask(question: str):
-    history = "\n".join([f"User: {m['content']}" if m['role']=='user' else f"Bot: {m['content']}" for m in st.session_state.messages[-6:]])
+    history = "\n".join([
+        f"User: {m['content']}" if m['role'] == 'user' else f"Bot: {m['content']}"
+        for m in st.session_state.messages[-6:]
+    ])
     context, sources = retrieve(f"{history}\n{question}")
     if not context:
         context = "No relevant documents found."
@@ -145,16 +151,25 @@ def ask(question: str):
         print(traceback.format_exc())
         return f"⚠️ Error from model: {e}", []
 
+# ── Page actions ──────────────────────────────────────────────────────────────
+def clear_chat():
+    st.session_state.messages = []
+    st.session_state.msg_count = 0
+    st.session_state.tokens = 0
+    st.session_state.pending = ""
+
+def set_pending(value: str):
+    st.session_state.pending = value
+
 # ── Sidebar (visitor only) ───────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("## 🎓 Sia @ SSSIHL")
-    if st.button("🗑️ Clear Chat", use_container_width=True):
-        st.session_state.messages = []
-        st.session_state.msg_count = 0
-        st.session_state.tokens = 0
-        st.experimental_rerun()
+    st.button("🗑️ Clear Chat", on_click=clear_chat, use_container_width=True)
     st.markdown("---")
     st.markdown("This app uses the OpenRouter free gateway and Pinecone for retrieval.")
+    st.markdown("---")
+    st.markdown(f"<div class='stat-box'>💬 Messages: <b>{st.session_state.msg_count}</b></div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='stat-box'>🔢 Tokens: <b>{st.session_state.tokens}</b></div>", unsafe_allow_html=True)
 
 # ── Suggestion chips ─────────────────────────────────────────────────────────
 if not st.session_state.messages:
@@ -167,9 +182,7 @@ if not st.session_state.messages:
         c4: "Describe the campus facilities"
     }
     for col, text in chips.items():
-        if col.button(text, use_container_width=True):
-            st.session_state["pending"] = text
-            st.experimental_rerun()
+        col.button(text, on_click=set_pending, args=(text,), use_container_width=True)
 
 # ── Chat display ────────────────────────────────────────────────────────────
 for msg in st.session_state.messages:
@@ -179,14 +192,28 @@ for msg in st.session_state.messages:
         st.markdown(f"<div class='bot-bubble'><b>Sia</b> &nbsp;{msg['content']}</div>", unsafe_allow_html=True)
 
 # ── Chat input ──────────────────────────────────────────────────────────────
-question = st.chat_input("Ask anything about SSSIHL...")
-if "pending" in st.session_state:
-    question = st.session_state.pop("pending")
+question = st.chat_input("Ask anything about SSSIHL...", key="visitor_question")
+if st.session_state.pending:
+    question = st.session_state.pending
+    st.session_state.pending = ""
 
 if question:
     st.session_state.messages.append({"role": "user", "content": question})
     st.session_state.msg_count += 1
     with st.spinner("🧠 Searching documents and generating response..."):
         answer, sources = ask(question)
-    st.session_state.messages.append({"role": "assistant", "content": answer, "sources": sources, "model_used": selected_model})
-    st.experimental_rerun()
+    st.session_state.messages.append({
+        "role": "assistant",
+        "content": answer,
+        "sources": sources,
+        "model_used": selected_model
+    })
+
+# ── Display sources when available ───────────────────────────────────────────
+if st.session_state.messages and st.session_state.messages[-1].get("sources"):
+    sources = st.session_state.messages[-1]["sources"]
+    if sources:
+        st.markdown("---")
+        st.markdown("**Sources used:**")
+        for src in sources:
+            st.markdown(f"- {src}")
