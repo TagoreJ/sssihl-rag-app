@@ -83,31 +83,9 @@ with st.spinner("🔄 Initializing system and connecting to DB..."):
 # ── Fetch FREE models list dynamically ─────────────────────────────────────────
 @st.cache_data(ttl=3600)
 def get_free_models():
-    default_models = {
-        "Arcee Ai":"arcee-ai/trinity-mini:free",
-        "⚡ LLaMA 3.3 70B": "meta-llama/llama-3.3-70b-instruct:free",
-        "🌟 Gemini 2.0 Flash": "google/gemini-2.0-flash-exp:free",
-        "Openrouter":"openrouter/free",
-        
-    }
-    try:
-        response = requests.get("https://openrouter.ai/api/v1/models")
-        if response.status_code == 200:
-            models_data = response.json().get("data", [])
-            # Filter for models that have a pricing of 0 or 'free' in id
-            free_models = {}
-            for m in models_data:
-                # OpenRouter usually tags free models with ':free' in ID
-                if ":free" in m["id"] or "free" in m["id"].lower():
-                    name = m.get("name", m["id"].split("/")[-1])
-                    free_models[f"✨ {name}"] = m["id"]
-            
-            # If we successfully fetched free models, return them, else defaults
-            if free_models:
-                return free_models
-    except Exception as e:
-        pass
-    return default_models
+    # Force a single source: openrouter's unified free model endpoint.
+    # This app will always use the OpenRouter free model gateway id `openrouter/free`.
+    return {"Openrouter": "openrouter/free"}
 
 FREE_MODELS = get_free_models()
 
@@ -182,7 +160,7 @@ with st.sidebar:
 
     st.markdown("---")
     st.markdown("### ℹ️ Limits & Info")
-    st.markdown("<div style='font-size:0.8rem; opacity:0.8;'>This bot runs on free API tiers. If a model becomes overloaded, Sia will automatically switch to a backup model to keep answering you.</div>", unsafe_allow_html=True)
+    st.markdown("<div style='font-size:0.8rem; opacity:0.8;'>This bot uses the OpenRouter free model gateway. If the OpenRouter free tier is overloaded, please try again later.</div>", unsafe_allow_html=True)
     st.markdown("---")
     st.markdown("""
     <div style='font-size:0.78rem; opacity:0.75; line-height:2;'>
@@ -373,8 +351,8 @@ if question:
             import openai
             
             success = False
-            # Try the user's selected model first
-            models_to_try = [selected_model] + [m for m in FREE_MODELS.values() if m != selected_model]
+            # Only use the single OpenRouter free gateway model
+            models_to_try = [selected_model]
             
             answer = "⚠️ Sorry, all free models are currently overloaded. Please try again in a few minutes."
             sources = []
@@ -397,8 +375,14 @@ if question:
                 except openai.RateLimitError:
                     continue # Try the next model
                 except Exception as e:
-                    # If it's another kind of error, log it and still try next
-                    print(f"Error with model {attempt_model}: {e}")
+                    # If it's another kind of error, show it in the UI and try next
+                    try:
+                        import traceback
+                        st.error(f"Error with model {attempt_model}: {e}")
+                        st.markdown(f"<details><summary>Traceback</summary><pre>{traceback.format_exc()}</pre></details>", unsafe_allow_html=True)
+                    except Exception:
+                        # Fall back to print if Streamlit UI call fails
+                        print(f"Error with model {attempt_model}: {e}")
                     continue
                 
     st.session_state.messages.append({
