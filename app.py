@@ -7,6 +7,7 @@ from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
 from pinecone import Pinecone
+import traceback
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -79,6 +80,24 @@ def init_rag():
 # Auto-connects on page load using cached resource function
 with st.spinner("🔄 Initializing system and connecting to DB..."):
     embeddings, index, openrouter_key = init_rag()
+
+# Quick diagnostics for OpenRouter connectivity to help debug 'all free models overloaded' issues
+def check_openrouter_key(key):
+    try:
+        headers = {"Authorization": f"Bearer {key}"}
+        r = requests.get("https://openrouter.ai/api/v1/models", headers=headers, timeout=10)
+        # Return status and a short excerpt of the response for debugging (not the key)
+        return r.status_code, (r.text[:1000] if r.text else "")
+    except Exception as e:
+        return None, str(e)
+
+status, body = check_openrouter_key(openrouter_key)
+if status is None:
+    st.warning(f"OpenRouter diagnostics failed: {body}")
+elif status != 200:
+    st.error(f"OpenRouter returned HTTP {status}. Response: {body}")
+else:
+    st.info("OpenRouter models endpoint reachable.")
 
 # ── Fetch FREE models list dynamically ─────────────────────────────────────────
 @st.cache_data(ttl=3600)
@@ -377,12 +396,12 @@ if question:
                 except Exception as e:
                     # If it's another kind of error, show it in the UI and try next
                     try:
-                        import traceback
                         st.error(f"Error with model {attempt_model}: {e}")
                         st.markdown(f"<details><summary>Traceback</summary><pre>{traceback.format_exc()}</pre></details>", unsafe_allow_html=True)
                     except Exception:
-                        # Fall back to print if Streamlit UI call fails
+                        # Fall back to printing traceback to console if Streamlit UI calls fail
                         print(f"Error with model {attempt_model}: {e}")
+                        print(traceback.format_exc())
                     continue
                 
     st.session_state.messages.append({
